@@ -10,7 +10,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Endpoint GET: Listar pacientes
+
 app.get('/pacientes', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM pacientes ORDER BY id ASC');
@@ -21,7 +21,7 @@ app.get('/pacientes', async (req, res) => {
   }
 });
 
-// Endpoint POST: Crear un paciente
+
 app.post('/pacientes', async (req, res) => {
   const { nombre, fecha_nacimiento, sexo, telefono } = req.body;
   try {
