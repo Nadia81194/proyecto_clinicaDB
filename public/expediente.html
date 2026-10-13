@@ -9,8 +9,11 @@
 <body class="bg-light">
   <nav class="navbar navbar-dark bg-primary mb-4">
     <div class="container">
-      <a class="navbar-brand" href="index.html">← Pacientes</a>
-      <span class="navbar-text text-white">Expediente clínico</span>
+      <a id="enlaceInicio" class="navbar-brand" href="index.html">← Pacientes</a>
+      <span class="text-white">
+        <span id="nombreUsuario" class="me-2"></span>
+        <button id="btnSalir" class="btn btn-sm btn-outline-light">Salir</button>
+      </span>
     </div>
   </nav>
 
@@ -23,12 +26,12 @@
     </div>
 
     <div class="row">
-      <div class="col-lg-8 mb-4">
+      <div class="col-lg-8 mb-4" id="colNotas">
         <h5>Notas clínicas <span class="badge bg-success">MongoDB</span> <span id="contador" class="badge bg-light text-dark border"></span></h5>
         <div id="notas"></div>
       </div>
 
-      <div class="col-lg-4 mb-4">
+      <div class="col-lg-4 mb-4" id="colForm">
         <div class="card shadow-sm">
           <div class="card-header" id="tituloForm">Agregar nota</div>
           <div class="card-body">
@@ -55,6 +58,8 @@
                 <option>Odontología</option>
               </select>
             </div>
+            <!-- Campos que cambian según la especialidad -->
+            <div id="camposExtra"></div>
             <div class="mb-2">
               <label class="form-label">Diagnóstico *</label>
               <input id="diagnostico" class="form-control">
@@ -85,14 +90,25 @@
     const id = new URLSearchParams(location.search).get('id');
     let notas = [];
     let editandoNota = null;
+    let yo = null;
+    let CAMPOS = {}; // campos extra por especialidad (vienen del servidor)
 
     const $ = x => document.getElementById(x);
-    const CONOCIDOS = ['_id', 'paciente_id', 'fecha', 'especialidad', 'diagnostico', 'sintomas', 'medicamentos', 'texto_libre'];
+    const CONOCIDOS = ['_id', 'paciente_id', 'fecha', 'especialidad', 'diagnostico', 'sintomas', 'medicamentos', 'texto_libre', 'registrado_por'];
 
     function esc(valor) {
       const d = document.createElement('div');
       d.textContent = valor ?? '';
       return d.innerHTML;
+    }
+
+    async function api(url, opciones) {
+      const res = await fetch(url, opciones);
+      if (res.status === 401) {
+        location.href = 'login.html';
+        throw new Error('Sin sesión');
+      }
+      return res;
     }
 
     function edad(fecha) {
@@ -108,6 +124,41 @@
     function aviso(tipo, texto) {
       $('mensaje').innerHTML = `<div class="alert alert-${tipo} py-1">${esc(texto)}</div>`;
       setTimeout(() => $('mensaje').innerHTML = '', 4000);
+    }
+
+    function etiquetaDe(clave) {
+      for (const lista of Object.values(CAMPOS)) {
+        const c = lista.find(x => x.clave === clave);
+        if (c) return c.etiqueta;
+      }
+      return clave.replaceAll('_', ' ');
+    }
+
+    // ----- Campos extra según la especialidad -----
+    function pintarExtras(especialidad, valores = {}) {
+      const cont = $('camposExtra');
+      cont.innerHTML = '';
+      (CAMPOS[especialidad] || []).forEach(c => {
+        const div = document.createElement('div');
+        div.className = 'mb-2';
+        div.innerHTML = '<label class="form-label"></label><input class="form-control">';
+        div.querySelector('label').textContent = c.etiqueta;
+        const input = div.querySelector('input');
+        input.id = 'extra_' + c.clave;
+        input.type = c.tipo === 'numero' ? 'number' : 'text';
+        if (c.tipo === 'numero') input.step = 'any';
+        input.placeholder = c.ejemplo || '';
+        input.value = valores[c.clave] ?? '';
+        cont.appendChild(div);
+      });
+    }
+
+    function leerExtras() {
+      const salida = {};
+      (CAMPOS[$('especialidad').value] || []).forEach(c => {
+        salida[c.clave] = $('extra_' + c.clave).value;
+      });
+      return salida;
     }
 
     // ----- Medicamentos: filas separadas (nombre, dosis, frecuencia) -----
@@ -144,7 +195,6 @@
       })).filter(m => m.nombre);
     }
 
-    // Selecciona la especialidad; si no está en la lista, la agrega para no perderla
     function ponerEspecialidad(valor) {
       const sel = $('especialidad');
       if (valor && ![...sel.options].some(o => o.value === valor || o.text === valor)) {
@@ -153,15 +203,18 @@
       sel.value = valor || '';
     }
 
+    // ----- Carga del expediente -----
     async function cargarExpediente() {
-      const res = await fetch('/expediente/' + id);
+      const res = await api('/expediente/' + id);
       if (!res.ok) {
-        $('error').innerHTML = '<div class="alert alert-danger">No se pudo cargar el expediente</div>';
+        const d = await res.json().catch(() => ({}));
+        $('error').innerHTML = `<div class="alert alert-danger">${esc(d.error || 'No se pudo cargar el expediente')}</div>`;
         return;
       }
       const datos = await res.json();
       const p = datos.paciente;
       notas = datos.notas;
+      const esMedico = yo.rol === 'medico';
 
       $('paciente').innerHTML = `
         <div class="row">
@@ -182,15 +235,17 @@
         const sintomas = (n.sintomas || [])
           .map(s => `<span class="badge bg-light text-dark border">${esc(s)}</span>`).join(' ');
         const extras = Object.entries(n).filter(([k]) => !CONOCIDOS.includes(k))
-          .map(([k, v]) => `<span class="badge text-bg-secondary me-1">${esc(k.replaceAll('_', ' '))}: ${esc(v)}</span>`).join('');
+          .map(([k, v]) => `<span class="badge text-bg-secondary me-1">${esc(etiquetaDe(k))}: ${esc(v)}</span>`).join('');
+        const botones = esMedico ? `
+          <span>
+            <button class="btn btn-sm btn-outline-secondary" data-accion="editar" data-id="${n._id}">Editar</button>
+            <button class="btn btn-sm btn-outline-danger" data-accion="borrar" data-id="${n._id}">Eliminar</button>
+          </span>` : '';
         return `
           <div class="card shadow-sm mb-3">
             <div class="card-header d-flex justify-content-between align-items-center">
               <span>${esc(n.especialidad)} <small class="text-muted ms-2">${esc((n.fecha || '').slice(0, 10))}</small></span>
-              <span>
-                <button class="btn btn-sm btn-outline-secondary" data-accion="editar" data-id="${n._id}">Editar</button>
-                <button class="btn btn-sm btn-outline-danger" data-accion="borrar" data-id="${n._id}">Eliminar</button>
-              </span>
+              ${botones}
             </div>
             <div class="card-body">
               <h6>${esc(n.diagnostico)}</h6>
@@ -206,6 +261,7 @@
     function limpiarForm() {
       editandoNota = null;
       ['especialidad', 'diagnostico', 'sintomas', 'texto_libre'].forEach(c => $(c).value = '');
+      pintarExtras('');
       cargarMeds([]);
       $('tituloForm').textContent = 'Agregar nota';
       $('btnGuardar').textContent = 'Guardar nota';
@@ -217,6 +273,7 @@
       if (!n) return;
       editandoNota = notaId;
       ponerEspecialidad(n.especialidad);
+      pintarExtras(n.especialidad, n);
       $('diagnostico').value = n.diagnostico || '';
       $('sintomas').value = (n.sintomas || []).join(', ');
       cargarMeds(n.medicamentos);
@@ -229,7 +286,7 @@
 
     async function borrar(notaId) {
       if (!confirm('¿Eliminar esta nota clínica? Esta acción no se puede deshacer.')) return;
-      const res = await fetch('/notas/' + notaId, { method: 'DELETE' });
+      const res = await api('/notas/' + notaId, { method: 'DELETE' });
       if (!res.ok) return aviso('danger', 'Error al eliminar la nota');
       if (editandoNota === notaId) limpiarForm();
       aviso('success', 'Nota eliminada');
@@ -244,24 +301,56 @@
         diagnostico,
         sintomas: $('sintomas').value.split(',').map(s => s.trim()).filter(Boolean),
         medicamentos: leerMeds(),
-        texto_libre: $('texto_libre').value.trim()
+        texto_libre: $('texto_libre').value.trim(),
+        ...leerExtras()
       };
       const url = editandoNota ? '/notas/' + editandoNota : `/pacientes/${id}/notas`;
-      const res = await fetch(url, {
+      const res = await api(url, {
         method: editandoNota ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nota)
       });
-      if (!res.ok) return aviso('danger', 'Error al guardar la nota');
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        return aviso('danger', d.error || 'Error al guardar la nota');
+      }
       const eraEdicion = !!editandoNota;
       limpiarForm();
       aviso('success', eraEdicion ? 'Nota actualizada' : 'Nota guardada');
       cargarExpediente();
     }
 
+    async function iniciar() {
+      if (!id) { location.href = 'index.html'; return; }
+      const res = await api('/auth/yo');
+      yo = await res.json();
+      $('nombreUsuario').textContent = yo.nombre;
+
+      const campos = await api('/campos-especialidad');
+      CAMPOS = await campos.json();
+
+      if (yo.rol === 'paciente') {
+        // Vista del paciente: solo lectura
+        $('colForm').remove();
+        $('colNotas').className = 'col-12 mb-4';
+        const enlace = $('enlaceInicio');
+        enlace.textContent = 'Mi expediente';
+        enlace.removeAttribute('href');
+      } else {
+        pintarExtras('');
+        cargarMeds([]);
+      }
+      cargarExpediente();
+    }
+
+    $('btnSalir').addEventListener('click', async () => {
+      await fetch('/auth/logout', { method: 'POST' });
+      location.href = 'login.html';
+    });
     $('btnGuardar').addEventListener('click', guardar);
     $('btnCancelar').addEventListener('click', limpiarForm);
     $('btnAgregarMed').addEventListener('click', () => agregarFilaMed());
+    $('especialidad').addEventListener('change', () => pintarExtras($('especialidad').value));
     $('notas').addEventListener('click', e => {
       const btn = e.target.closest('button[data-accion]');
       if (!btn) return;
@@ -269,8 +358,7 @@
       if (btn.dataset.accion === 'borrar') borrar(btn.dataset.id);
     });
 
-    cargarMeds([]);
-    cargarExpediente();
+    iniciar();
   </script>
 </body>
 </html>
