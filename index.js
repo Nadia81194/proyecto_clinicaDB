@@ -40,7 +40,6 @@ app.post('/pacientes', async (req, res) => {
 
 // ==================== ENDPOINTS DE MÉDICOS ====================
 
-// Obtener todos los médicos
 app.get('/medicos', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM medicos ORDER BY id ASC');
@@ -51,7 +50,6 @@ app.get('/medicos', async (req, res) => {
   }
 });
 
-// Crear un nuevo médico
 app.post('/medicos', async (req, res) => {
   const { nombre, especialidad, correo, telefono } = req.body;
   try {
@@ -70,7 +68,23 @@ app.post('/medicos', async (req, res) => {
 
 // ==================== ENDPOINTS DE RELACIÓN (MÉDICO - PACIENTE) ====================
 
-// Asignar un paciente a un médico
+app.get('/medico-paciente', async (req, res) => {
+  try {
+    const query = `
+      SELECT mp.id, m.nombre AS medico, p.nombre AS paciente, mp.fecha_asignacion 
+      FROM medico_paciente mp
+      JOIN medicos m ON mp.medico_id = m.id
+      JOIN pacientes p ON mp.paciente_id = p.id
+      ORDER BY mp.id ASC;
+    `;
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener las relaciones' });
+  }
+});
+
 app.post('/medico-paciente', async (req, res) => {
   const { medico_id, paciente_id } = req.body;
   try {
@@ -87,7 +101,6 @@ app.post('/medico-paciente', async (req, res) => {
   }
 });
 
-// Ver qué pacientes atiende un médico específico (con JOIN)
 app.get('/medicos/:id/pacientes', async (req, res) => {
   const { id } = req.params;
   try {
@@ -101,6 +114,36 @@ app.get('/medicos/:id/pacientes', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error al obtener los pacientes del médico' });
+  }
+});
+
+// ==================== ENDPOINTS DE USUARIOS ====================
+
+// Obtener todos los usuarios del sistema
+app.get('/usuarios', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, correo, rol, medico_id, paciente_id FROM usuarios ORDER BY id ASC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener los usuarios' });
+  }
+});
+
+// Registrar un nuevo usuario (respetando la lógica de rol: médico o paciente)
+app.post('/usuarios', async (req, res) => {
+  const { correo, password_hash, rol, medico_id, paciente_id } = req.body;
+  try {
+    const query = `
+      INSERT INTO usuarios (correo, password_hash, rol, medico_id, paciente_id) 
+      VALUES ($1, $2, $3, $4, $5) RETURNING id, correo, rol, medico_id, paciente_id;
+    `;
+    const values = [correo, password_hash, rol, medico_id || null, paciente_id || null];
+    const result = await pool.query(query, values);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al crear el usuario. Verifica que cumpla con las restricciones de rol.' });
   }
 });
 
