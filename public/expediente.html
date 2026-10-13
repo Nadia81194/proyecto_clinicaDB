@@ -17,27 +17,43 @@
   <div class="container">
     <div id="error"></div>
 
-    <!-- Datos del paciente (Postgres) -->
     <div class="card shadow-sm mb-4">
       <div class="card-header">Datos del paciente <span class="badge bg-secondary">PostgreSQL</span></div>
       <div class="card-body" id="paciente"></div>
     </div>
 
     <div class="row">
-      <!-- Notas (Mongo) -->
-      <div class="col-md-8 mb-4">
-        <h5>Notas clínicas <span class="badge bg-success">MongoDB</span></h5>
+      <div class="col-lg-8 mb-4">
+        <h5>Notas clínicas <span class="badge bg-success">MongoDB</span> <span id="contador" class="badge bg-light text-dark border"></span></h5>
         <div id="notas"></div>
       </div>
 
-      <!-- Nueva nota -->
-      <div class="col-md-4 mb-4">
+      <div class="col-lg-4 mb-4">
         <div class="card shadow-sm">
-          <div class="card-header">Agregar nota</div>
+          <div class="card-header" id="tituloForm">Agregar nota</div>
           <div class="card-body">
             <div class="mb-2">
               <label class="form-label">Especialidad</label>
-              <input id="especialidad" class="form-control">
+              <select id="especialidad" class="form-select">
+                <option value="">Selecciona una especialidad...</option>
+                <option>Medicina general</option>
+                <option>Cardiología</option>
+                <option>Neurología</option>
+                <option>Pediatría</option>
+                <option>Ginecología</option>
+                <option>Endocrinología</option>
+                <option>Traumatología</option>
+                <option>Dermatología</option>
+                <option>Oftalmología</option>
+                <option>Otorrinolaringología</option>
+                <option>Psiquiatría</option>
+                <option>Gastroenterología</option>
+                <option>Neumología</option>
+                <option>Urología</option>
+                <option>Oncología</option>
+                <option>Nutrición</option>
+                <option>Odontología</option>
+              </select>
             </div>
             <div class="mb-2">
               <label class="form-label">Diagnóstico *</label>
@@ -48,18 +64,16 @@
               <input id="sintomas" class="form-control">
             </div>
             <div class="mb-2">
-              <label class="form-label">Medicamento</label>
-              <input id="med_nombre" class="form-control" placeholder="Nombre">
-              <div class="d-flex gap-1 mt-1">
-                <input id="med_dosis" class="form-control" placeholder="Dosis">
-                <input id="med_frecuencia" class="form-control" placeholder="Frecuencia">
-              </div>
+              <label class="form-label">Medicamentos</label>
+              <div id="listaMeds"></div>
+              <button type="button" id="btnAgregarMed" class="btn btn-sm btn-outline-success mt-1">+ Agregar medicamento</button>
             </div>
             <div class="mb-3">
               <label class="form-label">Notas</label>
               <textarea id="texto_libre" class="form-control" rows="3"></textarea>
             </div>
-            <button class="btn btn-success w-100" onclick="agregarNota()">Guardar nota</button>
+            <button id="btnGuardar" class="btn btn-success w-100">Guardar nota</button>
+            <button id="btnCancelar" class="btn btn-outline-secondary w-100 mt-2 d-none">Cancelar edición</button>
             <div id="mensaje" class="mt-2"></div>
           </div>
         </div>
@@ -69,90 +83,193 @@
 
   <script>
     const id = new URLSearchParams(location.search).get('id');
+    let notas = [];
+    let editandoNota = null;
 
-    function texto(valor) {
+    const $ = x => document.getElementById(x);
+    const CONOCIDOS = ['_id', 'paciente_id', 'fecha', 'especialidad', 'diagnostico', 'sintomas', 'medicamentos', 'texto_libre'];
+
+    function esc(valor) {
       const d = document.createElement('div');
       d.textContent = valor ?? '';
       return d.innerHTML;
     }
 
+    function edad(fecha) {
+      if (!fecha) return '';
+      const hoy = new Date();
+      const n = new Date(fecha + 'T00:00:00');
+      let e = hoy.getFullYear() - n.getFullYear();
+      const m = hoy.getMonth() - n.getMonth();
+      if (m < 0 || (m === 0 && hoy.getDate() < n.getDate())) e--;
+      return e + ' años';
+    }
+
+    function aviso(tipo, texto) {
+      $('mensaje').innerHTML = `<div class="alert alert-${tipo} py-1">${esc(texto)}</div>`;
+      setTimeout(() => $('mensaje').innerHTML = '', 4000);
+    }
+
+    // ----- Medicamentos: filas separadas (nombre, dosis, frecuencia) -----
+    function agregarFilaMed(m = {}) {
+      const fila = document.createElement('div');
+      fila.className = 'border rounded p-2 mb-2 fila-med';
+      fila.innerHTML = `
+        <div class="d-flex gap-1 mb-1">
+          <input class="form-control form-control-sm med-nombre" placeholder="Medicamento">
+          <button type="button" class="btn btn-sm btn-outline-danger" title="Quitar">✕</button>
+        </div>
+        <div class="d-flex gap-1">
+          <input class="form-control form-control-sm med-dosis" placeholder="Dosis">
+          <input class="form-control form-control-sm med-frecuencia" placeholder="Frecuencia">
+        </div>`;
+      fila.querySelector('.med-nombre').value = m.nombre || '';
+      fila.querySelector('.med-dosis').value = m.dosis || '';
+      fila.querySelector('.med-frecuencia').value = m.frecuencia || '';
+      fila.querySelector('button').addEventListener('click', () => fila.remove());
+      $('listaMeds').appendChild(fila);
+    }
+
+    function cargarMeds(meds) {
+      $('listaMeds').innerHTML = '';
+      (meds || []).forEach(m => agregarFilaMed(m));
+      if (!meds || meds.length === 0) agregarFilaMed();
+    }
+
+    function leerMeds() {
+      return [...document.querySelectorAll('.fila-med')].map(f => ({
+        nombre: f.querySelector('.med-nombre').value.trim(),
+        dosis: f.querySelector('.med-dosis').value.trim(),
+        frecuencia: f.querySelector('.med-frecuencia').value.trim()
+      })).filter(m => m.nombre);
+    }
+
+    // Selecciona la especialidad; si no está en la lista, la agrega para no perderla
+    function ponerEspecialidad(valor) {
+      const sel = $('especialidad');
+      if (valor && ![...sel.options].some(o => o.value === valor || o.text === valor)) {
+        sel.add(new Option(valor, valor));
+      }
+      sel.value = valor || '';
+    }
+
     async function cargarExpediente() {
       const res = await fetch('/expediente/' + id);
       if (!res.ok) {
-        document.getElementById('error').innerHTML =
-          '<div class="alert alert-danger">No se pudo cargar el expediente</div>';
+        $('error').innerHTML = '<div class="alert alert-danger">No se pudo cargar el expediente</div>';
         return;
       }
-      const { paciente, notas } = await res.json();
+      const datos = await res.json();
+      const p = datos.paciente;
+      notas = datos.notas;
 
-      document.getElementById('paciente').innerHTML = `
+      $('paciente').innerHTML = `
         <div class="row">
-          <div class="col-md-3"><strong>Nombre</strong><br>${texto(paciente.nombre)}</div>
-          <div class="col-md-3"><strong>Nacimiento</strong><br>${texto((paciente.fecha_nacimiento || '').slice(0, 10))}</div>
-          <div class="col-md-3"><strong>Sexo</strong><br>${texto(paciente.sexo)}</div>
-          <div class="col-md-3"><strong>Teléfono</strong><br>${texto(paciente.telefono)}</div>
+          <div class="col-md-3"><strong>Nombre</strong><br>${esc(p.nombre)}</div>
+          <div class="col-md-3"><strong>Nacimiento</strong><br>${esc(p.fecha_nacimiento)} (${edad(p.fecha_nacimiento)})</div>
+          <div class="col-md-3"><strong>Sexo</strong><br>${esc(p.sexo)}</div>
+          <div class="col-md-3"><strong>Teléfono</strong><br>${esc(p.telefono)}</div>
         </div>`;
 
-      const contenedor = document.getElementById('notas');
+      $('contador').textContent = notas.length;
       if (notas.length === 0) {
-        contenedor.innerHTML = '<div class="alert alert-info">Este paciente aún no tiene notas.</div>';
+        $('notas').innerHTML = '<div class="alert alert-info">Este paciente aún no tiene notas.</div>';
         return;
       }
-      contenedor.innerHTML = notas.map(n => {
+      $('notas').innerHTML = notas.map(n => {
         const meds = (n.medicamentos || [])
-          .map(m => `${texto(m.nombre)} ${texto(m.dosis)} (${texto(m.frecuencia)})`).join('<br>');
-        const sintomas = (n.sintomas || []).map(s => `<span class="badge bg-light text-dark border">${texto(s)}</span>`).join(' ');
+          .map(m => `${esc(m.nombre)} ${esc(m.dosis)} (${esc(m.frecuencia)})`).join('<br>');
+        const sintomas = (n.sintomas || [])
+          .map(s => `<span class="badge bg-light text-dark border">${esc(s)}</span>`).join(' ');
+        const extras = Object.entries(n).filter(([k]) => !CONOCIDOS.includes(k))
+          .map(([k, v]) => `<span class="badge text-bg-secondary me-1">${esc(k.replaceAll('_', ' '))}: ${esc(v)}</span>`).join('');
         return `
           <div class="card shadow-sm mb-3">
-            <div class="card-header d-flex justify-content-between">
-              <span>${texto(n.especialidad)}</span>
-              <small>${texto((n.fecha || '').slice(0, 10))}</small>
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span>${esc(n.especialidad)} <small class="text-muted ms-2">${esc((n.fecha || '').slice(0, 10))}</small></span>
+              <span>
+                <button class="btn btn-sm btn-outline-secondary" data-accion="editar" data-id="${n._id}">Editar</button>
+                <button class="btn btn-sm btn-outline-danger" data-accion="borrar" data-id="${n._id}">Eliminar</button>
+              </span>
             </div>
             <div class="card-body">
-              <h6>${texto(n.diagnostico)}</h6>
+              <h6>${esc(n.diagnostico)}</h6>
               <p class="mb-1">${sintomas}</p>
+              ${extras ? `<p class="mb-1">${extras}</p>` : ''}
               ${meds ? `<p class="mb-1"><strong>Medicamentos:</strong><br>${meds}</p>` : ''}
-              <p class="mb-0 text-muted">${texto(n.texto_libre)}</p>
+              <p class="mb-0 text-muted">${esc(n.texto_libre)}</p>
             </div>
           </div>`;
       }).join('');
     }
 
-    async function agregarNota() {
-      const mensaje = document.getElementById('mensaje');
-      const diagnostico = document.getElementById('diagnostico').value.trim();
-      if (!diagnostico) {
-        mensaje.innerHTML = '<div class="alert alert-warning py-1">El diagnóstico es obligatorio</div>';
-        return;
-      }
-      const medNombre = document.getElementById('med_nombre').value.trim();
+    function limpiarForm() {
+      editandoNota = null;
+      ['especialidad', 'diagnostico', 'sintomas', 'texto_libre'].forEach(c => $(c).value = '');
+      cargarMeds([]);
+      $('tituloForm').textContent = 'Agregar nota';
+      $('btnGuardar').textContent = 'Guardar nota';
+      $('btnCancelar').classList.add('d-none');
+    }
+
+    function editar(notaId) {
+      const n = notas.find(x => x._id === notaId);
+      if (!n) return;
+      editandoNota = notaId;
+      ponerEspecialidad(n.especialidad);
+      $('diagnostico').value = n.diagnostico || '';
+      $('sintomas').value = (n.sintomas || []).join(', ');
+      cargarMeds(n.medicamentos);
+      $('texto_libre').value = n.texto_libre || '';
+      $('tituloForm').textContent = 'Editando nota';
+      $('btnGuardar').textContent = 'Actualizar nota';
+      $('btnCancelar').classList.remove('d-none');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function borrar(notaId) {
+      if (!confirm('¿Eliminar esta nota clínica? Esta acción no se puede deshacer.')) return;
+      const res = await fetch('/notas/' + notaId, { method: 'DELETE' });
+      if (!res.ok) return aviso('danger', 'Error al eliminar la nota');
+      if (editandoNota === notaId) limpiarForm();
+      aviso('success', 'Nota eliminada');
+      cargarExpediente();
+    }
+
+    async function guardar() {
+      const diagnostico = $('diagnostico').value.trim();
+      if (!diagnostico) return aviso('warning', 'El diagnóstico es obligatorio');
       const nota = {
-        especialidad: document.getElementById('especialidad').value,
+        especialidad: $('especialidad').value,
         diagnostico,
-        sintomas: document.getElementById('sintomas').value
-          .split(',').map(s => s.trim()).filter(Boolean),
-        medicamentos: medNombre ? [{
-          nombre: medNombre,
-          dosis: document.getElementById('med_dosis').value,
-          frecuencia: document.getElementById('med_frecuencia').value
-        }] : [],
-        texto_libre: document.getElementById('texto_libre').value
+        sintomas: $('sintomas').value.split(',').map(s => s.trim()).filter(Boolean),
+        medicamentos: leerMeds(),
+        texto_libre: $('texto_libre').value.trim()
       };
-      const res = await fetch(`/pacientes/${id}/notas`, {
-        method: 'POST',
+      const url = editandoNota ? '/notas/' + editandoNota : `/pacientes/${id}/notas`;
+      const res = await fetch(url, {
+        method: editandoNota ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nota)
       });
-      if (res.ok) {
-        mensaje.innerHTML = '<div class="alert alert-success py-1">Nota guardada</div>';
-        ['especialidad','diagnostico','sintomas','med_nombre','med_dosis','med_frecuencia','texto_libre']
-          .forEach(c => document.getElementById(c).value = '');
-        cargarExpediente();
-      } else {
-        mensaje.innerHTML = '<div class="alert alert-danger py-1">Error al guardar la nota</div>';
-      }
+      if (!res.ok) return aviso('danger', 'Error al guardar la nota');
+      const eraEdicion = !!editandoNota;
+      limpiarForm();
+      aviso('success', eraEdicion ? 'Nota actualizada' : 'Nota guardada');
+      cargarExpediente();
     }
 
+    $('btnGuardar').addEventListener('click', guardar);
+    $('btnCancelar').addEventListener('click', limpiarForm);
+    $('btnAgregarMed').addEventListener('click', () => agregarFilaMed());
+    $('notas').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-accion]');
+      if (!btn) return;
+      if (btn.dataset.accion === 'editar') editar(btn.dataset.id);
+      if (btn.dataset.accion === 'borrar') borrar(btn.dataset.id);
+    });
+
+    cargarMeds([]);
     cargarExpediente();
   </script>
 </body>

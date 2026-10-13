@@ -10,22 +10,24 @@
   <nav class="navbar navbar-dark bg-primary mb-4">
     <div class="container">
       <span class="navbar-brand mb-0 h1">Expedientes clínicos</span>
+      <span class="navbar-text text-white-50 small">PostgreSQL + MongoDB</span>
     </div>
   </nav>
 
   <div class="container">
+    <div id="mensaje"></div>
     <div class="row">
-      <!-- Formulario de alta -->
-      <div class="col-md-4 mb-4">
+      <!-- Formulario: alta y edición -->
+      <div class="col-lg-4 mb-4">
         <div class="card shadow-sm">
-          <div class="card-header">Nuevo paciente</div>
+          <div class="card-header" id="tituloForm">Nuevo paciente</div>
           <div class="card-body">
             <div class="mb-2">
-              <label class="form-label">Nombre</label>
+              <label class="form-label">Nombre *</label>
               <input id="nombre" class="form-control">
             </div>
             <div class="mb-2">
-              <label class="form-label">Fecha de nacimiento</label>
+              <label class="form-label">Fecha de nacimiento *</label>
               <input id="fecha_nacimiento" type="date" class="form-control">
             </div>
             <div class="mb-2">
@@ -39,20 +41,23 @@
               <label class="form-label">Teléfono</label>
               <input id="telefono" class="form-control">
             </div>
-            <button class="btn btn-primary w-100" onclick="crearPaciente()">Guardar paciente</button>
-            <div id="mensaje" class="mt-2"></div>
+            <button id="btnGuardar" class="btn btn-primary w-100">Guardar paciente</button>
+            <button id="btnCancelar" class="btn btn-outline-secondary w-100 mt-2 d-none">Cancelar edición</button>
           </div>
         </div>
       </div>
 
-      <!-- Lista de pacientes -->
-      <div class="col-md-8">
+      <!-- Lista -->
+      <div class="col-lg-8">
         <div class="card shadow-sm">
-          <div class="card-header">Pacientes</div>
+          <div class="card-header d-flex justify-content-between align-items-center gap-2">
+            <span>Pacientes <span id="contador" class="badge bg-secondary"></span></span>
+            <input id="buscar" class="form-control form-control-sm w-50" placeholder="Buscar por nombre o teléfono...">
+          </div>
           <div class="table-responsive">
-            <table class="table table-hover mb-0">
+            <table class="table table-hover align-middle mb-0">
               <thead>
-                <tr><th>ID</th><th>Nombre</th><th>Sexo</th><th>Teléfono</th><th></th></tr>
+                <tr><th>ID</th><th>Nombre</th><th>Edad</th><th>Sexo</th><th>Teléfono</th><th></th></tr>
               </thead>
               <tbody id="tabla"></tbody>
             </table>
@@ -63,51 +68,129 @@
   </div>
 
   <script>
-    async function cargarPacientes() {
-      const res = await fetch('/pacientes');
-      const pacientes = await res.json();
-      const tabla = document.getElementById('tabla');
-      tabla.innerHTML = '';
-      pacientes.forEach(p => {
-        const fila = document.createElement('tr');
-        fila.innerHTML = `
-          <td>${p.id}</td>
-          <td></td>
-          <td>${p.sexo ?? ''}</td>
-          <td></td>
-          <td><a class="btn btn-sm btn-outline-primary" href="expediente.html?id=${p.id}">Ver expediente</a></td>`;
-        fila.children[1].textContent = p.nombre;
-        fila.children[3].textContent = p.telefono ?? '';
-        tabla.appendChild(fila);
-      });
+    let pacientes = [];
+    let editandoId = null;
+
+    const $ = id => document.getElementById(id);
+
+    function esc(valor) {
+      const d = document.createElement('div');
+      d.textContent = valor ?? '';
+      return d.innerHTML;
     }
 
-    async function crearPaciente() {
+    function edad(fecha) {
+      if (!fecha) return '';
+      const hoy = new Date();
+      const n = new Date(fecha + 'T00:00:00');
+      let e = hoy.getFullYear() - n.getFullYear();
+      const m = hoy.getMonth() - n.getMonth();
+      if (m < 0 || (m === 0 && hoy.getDate() < n.getDate())) e--;
+      return e;
+    }
+
+    function aviso(tipo, texto) {
+      $('mensaje').innerHTML = `<div class="alert alert-${tipo} py-2">${esc(texto)}</div>`;
+      setTimeout(() => $('mensaje').innerHTML = '', 4000);
+    }
+
+    async function cargarPacientes() {
+      const res = await fetch('/pacientes');
+      pacientes = await res.json();
+      mostrar();
+    }
+
+    function mostrar() {
+      const q = $('buscar').value.trim().toLowerCase();
+      const filtrados = pacientes.filter(p =>
+        (p.nombre || '').toLowerCase().includes(q) || (p.telefono || '').includes(q));
+      $('contador').textContent = filtrados.length;
+      $('tabla').innerHTML = filtrados.length === 0
+        ? '<tr><td colspan="6" class="text-center text-muted py-3">Sin resultados</td></tr>'
+        : filtrados.map(p => `
+          <tr>
+            <td>${p.id}</td>
+            <td>${esc(p.nombre)}</td>
+            <td>${edad(p.fecha_nacimiento)}</td>
+            <td>${esc(p.sexo)}</td>
+            <td>${esc(p.telefono)}</td>
+            <td class="text-end text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="expediente.html?id=${p.id}">Expediente</a>
+              <button class="btn btn-sm btn-outline-secondary" data-accion="editar" data-id="${p.id}">Editar</button>
+              <button class="btn btn-sm btn-outline-danger" data-accion="borrar" data-id="${p.id}">Eliminar</button>
+            </td>
+          </tr>`).join('');
+    }
+
+    function limpiarForm() {
+      editandoId = null;
+      ['nombre', 'fecha_nacimiento', 'telefono'].forEach(c => $(c).value = '');
+      $('sexo').value = 'F';
+      $('tituloForm').textContent = 'Nuevo paciente';
+      $('btnGuardar').textContent = 'Guardar paciente';
+      $('btnCancelar').classList.add('d-none');
+    }
+
+    function editar(id) {
+      const p = pacientes.find(x => x.id === id);
+      if (!p) return;
+      editandoId = id;
+      $('nombre').value = p.nombre || '';
+      $('fecha_nacimiento').value = p.fecha_nacimiento || '';
+      $('sexo').value = p.sexo || 'F';
+      $('telefono').value = p.telefono || '';
+      $('tituloForm').textContent = 'Editando paciente #' + id;
+      $('btnGuardar').textContent = 'Actualizar paciente';
+      $('btnCancelar').classList.remove('d-none');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function borrar(id) {
+      const p = pacientes.find(x => x.id === id);
+      if (!confirm(`¿Eliminar a "${p.nombre}"?\n\nTambién se borrarán todas sus notas clínicas. Esta acción no se puede deshacer.`)) return;
+      const res = await fetch('/pacientes/' + id, { method: 'DELETE' });
+      const datos = await res.json();
+      if (!res.ok) return aviso('danger', datos.error || 'Error al eliminar');
+      if (datos.aviso) aviso('warning', datos.aviso);
+      else aviso('success', `Paciente eliminado (${datos.notasBorradas} notas borradas)`);
+      if (editandoId === id) limpiarForm();
+      cargarPacientes();
+    }
+
+    async function guardar() {
       const datos = {
-        nombre: document.getElementById('nombre').value,
-        fecha_nacimiento: document.getElementById('fecha_nacimiento').value,
-        sexo: document.getElementById('sexo').value,
-        telefono: document.getElementById('telefono').value
+        nombre: $('nombre').value.trim(),
+        fecha_nacimiento: $('fecha_nacimiento').value,
+        sexo: $('sexo').value,
+        telefono: $('telefono').value.trim()
       };
-      const mensaje = document.getElementById('mensaje');
       if (!datos.nombre || !datos.fecha_nacimiento) {
-        mensaje.innerHTML = '<div class="alert alert-warning py-1">Nombre y fecha son obligatorios</div>';
-        return;
+        return aviso('warning', 'Nombre y fecha de nacimiento son obligatorios');
       }
-      const res = await fetch('/pacientes', {
-        method: 'POST',
+      const url = editandoId ? '/pacientes/' + editandoId : '/pacientes';
+      const res = await fetch(url, {
+        method: editandoId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(datos)
       });
-      if (res.ok) {
-        mensaje.innerHTML = '<div class="alert alert-success py-1">Paciente guardado</div>';
-        document.getElementById('nombre').value = '';
-        document.getElementById('telefono').value = '';
-        cargarPacientes();
-      } else {
-        mensaje.innerHTML = '<div class="alert alert-danger py-1">Error al guardar</div>';
-      }
+      const respuesta = await res.json();
+      if (!res.ok) return aviso('danger', respuesta.error || 'Error al guardar');
+      aviso('success', editandoId ? 'Paciente actualizado' : 'Paciente guardado');
+      limpiarForm();
+      cargarPacientes();
     }
+
+    // Eventos
+    $('btnGuardar').addEventListener('click', guardar);
+    $('btnCancelar').addEventListener('click', limpiarForm);
+    $('buscar').addEventListener('input', mostrar);
+    $('tabla').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-accion]');
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      if (btn.dataset.accion === 'editar') editar(id);
+      if (btn.dataset.accion === 'borrar') borrar(id);
+    });
 
     cargarPacientes();
   </script>
