@@ -168,7 +168,7 @@ router.put('/notas/:id', requireAuth, soloMedico, async (req, res) => {
   }
 });
 
-// DELETE /notas/:id
+// DELETE /notas/:id 
 router.delete('/notas/:id', requireAuth, soloMedico, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'id de nota inválido' });
   try {
